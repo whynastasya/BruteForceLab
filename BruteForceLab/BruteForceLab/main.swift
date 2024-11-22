@@ -8,103 +8,88 @@
 import Foundation
 import CryptoKit
 
-// Функция для генерации всех пятибуквенных комбинаций из английских строчных букв
-func generatePasswords() -> [String] {
-    let chars = Array("abcdefghijklmnopqrstuvwxyz")
-    var passwords = [String]()
-    for c1 in chars {
-        for c2 in chars {
-            for c3 in chars {
-                for c4 in chars {
-                    for c5 in chars {
-                        passwords.append("\(c1)\(c2)\(c3)\(c4)\(c5)")
-                    }
-                }
-            }
-        }
+let dictionary = Array("abcdefghijklmnopqrstuvwxyz")
+let dictionaryLength = dictionary.count
+
+func intToPassword(_ n: Int) -> String {
+    var password = [Character](repeating: "a", count: 5)
+    var n = n
+    for i in stride(from: 4, through: 0, by: -1) {
+        password[i] = dictionary[n % dictionaryLength]
+        n /= dictionaryLength
     }
-    return passwords
+    return String(password)
 }
 
-// Функция для вычисления MD5 хеша
-func md5Hash(for password: String) -> String {
-    let data = Data(password.utf8)
+func calculateMD5(_ s: String) -> String {
+    let data = Data(s.utf8)
     let hash = Insecure.MD5.hash(data: data)
-    return hash.map { String(format: "%02hhx", $0) }.joined()
+    return hash.map { String(format: "%02x", $0) }.joined()
 }
 
-// Функция для вычисления SHA-256 хеша
-func sha256Hash(for password: String) -> String {
-    let data = Data(password.utf8)
+func calculateSHA256(_ s: String) -> String {
+    let data = Data(s.utf8)
     let hash = SHA256.hash(data: data)
-    return hash.map { String(format: "%02hhx", $0) }.joined()
+    return hash.map { String(format: "%02x", $0) }.joined()
 }
 
-// Однопоточная функция перебора
-func bruteForceSingleThread(targetMD5: String, targetSHA256: String) -> String? {
-    let passwords = generatePasswords()
-    for password in passwords {
-        if md5Hash(for: password) == targetMD5 || sha256Hash(for: password) == targetSHA256 {
-            return password
-        }
-    }
-    return nil
-}
+func bruteForce(hash: String, threadsAmount: Int, calculateHashFunc: @escaping (String) -> String) {
+    let totalCombinations = Int(pow(Double(dictionaryLength), 5))
+    let resultsQueue = DispatchQueue(label: "com.bruteforce.resultsQueue")
+    var results: [String] = []
 
-// Многопоточная функция перебора
-func bruteForceMultiThread(targetMD5: String, targetSHA256: String, numThreads: Int) -> String? {
-    let passwords = generatePasswords()
-    let chunkSize = passwords.count / numThreads
+    let workerQueue = DispatchQueue(label: "com.bruteforce.workerQueue", attributes: .concurrent)
     let group = DispatchGroup()
-    var foundPassword: String?
 
-    for i in 0..<numThreads {
-        let start = i * chunkSize
-        let end = i == numThreads - 1 ? passwords.count : start + chunkSize
-        let chunk = Array(passwords[start..<end])
-
-        DispatchQueue.global().async(group: group) {
-            for password in chunk {
-                if md5Hash(for: password) == targetMD5 || sha256Hash(for: password) == targetSHA256 {
-                    foundPassword = password
-                    return
+    for threadId in 0..<threadsAmount {
+        workerQueue.async(group: group) {
+            for i in stride(from: threadId, to: totalCombinations, by: threadsAmount) {
+                let password = intToPassword(i)
+                if calculateHashFunc(password) == hash {
+                    resultsQueue.sync {
+                        results.append(password)
+                        print("Поток \(threadId): Найден пароль - \(password)")
+                    }
                 }
             }
         }
     }
 
     group.wait()
-    return foundPassword
+
+    print("\nВсе найденные пароли:")
+    for password in results {
+        print(password)
+    }
+    print("Общее количество совпадений: \(results.count)")
 }
 
 func main() {
-    print("Введите MD5 хеш: ", terminator: "")
-    let targetMD5 = readLine()!.trimmingCharacters(in: .whitespacesAndNewlines)
-
-    print("Введите SHA-256 хеш: ", terminator: "")
-    let targetSHA256 = readLine()!.trimmingCharacters(in: .whitespacesAndNewlines)
-
-    print("Однопоточный режим:")
-    let startTimeSingle = Date()
-    if let password = bruteForceSingleThread(targetMD5: targetMD5, targetSHA256: targetSHA256) {
-        print("Найден пароль: \(password)")
-    } else {
-        print("Пароль не найден")
+    while true {
+        print("Введите тип хэширования (md5 или sha256):")
+        guard let hashType = readLine()?.lowercased(), (hashType == "md5" || hashType == "sha256") else {
+            print("Неверный тип хэширования. Доступны только md5 или sha256.")
+            return
+        }
+        
+        print("Введите хэш для брутфорса:")
+        guard let hash = readLine(), (hashType == "md5" && hash.count == 32) || (hashType == "sha256" && hash.count == 64) else {
+            print("Неверная длина хэша для \(hashType).")
+            return
+        }
+        
+        print("Введите количество потоков:")
+        guard let threadsAmountStr = readLine(), let threadsAmount = Int(threadsAmountStr), threadsAmount > 0 else {
+            print("Количество потоков должно быть натуральным числом больше нуля.")
+            return
+        }
+        
+        print("\nЗапуск брутфорса...")
+        let start = Date()
+        bruteForce(hash: hash, threadsAmount: threadsAmount, calculateHashFunc: hashType == "sha256" ? calculateSHA256 : calculateMD5)
+        let elapsed = Date().timeIntervalSince(start)
+        print("\nБрутфорс завершен за \(elapsed) секунд")
     }
-    let endTimeSingle = Date()
-    print("Время выполнения: \(endTimeSingle.timeIntervalSince(startTimeSingle)) секунд")
-
-    print("\nВведите количество потоков для многопоточного режима: ", terminator: "")
-    let numThreads = Int(readLine()!) ?? 4
-    print("\nМногопоточный режим с \(numThreads) потоками:")
-    let startTimeMulti = Date()
-    if let password = bruteForceMultiThread(targetMD5: targetMD5, targetSHA256: targetSHA256, numThreads: numThreads) {
-        print("Найден пароль: \(password)")
-    } else {
-        print("Пароль не найден")
-    }
-    let endTimeMulti = Date()
-    print("Время выполнения: \(endTimeMulti.timeIntervalSince(startTimeMulti)) секунд")
 }
 
 main()
