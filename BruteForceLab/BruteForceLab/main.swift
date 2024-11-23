@@ -35,33 +35,40 @@ func calculateSHA256(_ s: String) -> String {
 
 func bruteForce(hash: String, threadsAmount: Int, calculateHashFunc: @escaping (String) -> String) {
     let totalCombinations = Int(pow(Double(dictionaryLength), 5))
-    let resultsQueue = DispatchQueue(label: "com.bruteforce.resultsQueue")
+    let resultsLock = NSLock() 
     var results: [String] = []
 
-    let workerQueue = DispatchQueue(label: "com.bruteforce.workerQueue", attributes: .concurrent)
-    let group = DispatchGroup()
-
-    for threadId in 0..<threadsAmount {
-        workerQueue.async(group: group) {
+    let threads: [Thread] = (0..<threadsAmount).map { threadId in
+        return Thread {
             for i in stride(from: threadId, to: totalCombinations, by: threadsAmount) {
                 let password = intToPassword(i)
                 if calculateHashFunc(password) == hash {
-                    resultsQueue.sync {
-                        results.append(password)
-                        print("Поток \(threadId): Найден пароль - \(password)")
-                    }
+                    resultsLock.lock()
+                    results.append(password)
+                    print("Поток \(threadId): Найден пароль - \(password)")
+                    resultsLock.unlock()
                 }
             }
         }
     }
 
-    group.wait()
+    threads.forEach { $0.start() }
+
+    threads.forEach { $0.join() }
 
     print("\nВсе найденные пароли:")
     for password in results {
         print(password)
     }
     print("Общее количество совпадений: \(results.count)")
+}
+
+extension Thread {
+    func join() {
+        while !isFinished {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+    }
 }
 
 func main() {
